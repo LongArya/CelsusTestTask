@@ -1,8 +1,11 @@
 import cv2
+from math import floor, ceil
+import random as rd
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import Union, Tuple
 from ..schemas.data.figures import Square, Circle
+from ..consts import MAX_SQUARE_BBOX_SIDE_GAIN_KOEF
 
 CV_COLOR_TYPE = Union[int, Tuple[int, int, int]]
 GRAYSCALE_WHITE = 255
@@ -90,3 +93,129 @@ def generate_sample_image(
     )
     blended = blended.astype(np.uint8)
     return blended
+
+
+def generate_random_circle(
+    target_img_shape_wh: Tuple[int, int],
+    min_radius_pxl: int,
+    gap_between_image_boundaries: int = 1,
+) -> Circle:
+    """
+    Generates random circle that could be placed on image.
+    Ensures that it will be within image boundaries
+
+    Args:
+        target_img_shape_wh (Tuple[int, int]): width, height of target img
+        min_radius_pxl (int): minimum allowed radius
+        gap_between_image_boundaries (int, optional): Space that will be left empty
+        between circle boundary and image edge. Defaults to 1.
+
+    Returns:
+        Circle: random circle that could be placed on image of target size
+    """
+
+    w, h = target_img_shape_wh
+    min_img_side: int = min(w, h)
+    max_possible_radius_pxl: int = int(min_img_side // 2) - gap_between_image_boundaries * 2
+    circle_radius = rd.randrange(min_radius_pxl, max_possible_radius_pxl + 1)
+
+    # define possible values for circle center
+    min_x = gap_between_image_boundaries + circle_radius
+    max_x = (w - 1) - circle_radius - gap_between_image_boundaries
+
+    min_y = gap_between_image_boundaries + circle_radius
+    max_y = (h - 1) - circle_radius - gap_between_image_boundaries
+
+    # sanity check ranges
+    if not (min_x < max_x):
+        raise ValueError("Invalid range for center x")
+
+    if not (min_y < max_y):
+        raise ValueError("Invalid range for center y")
+
+    x_center: int = rd.randrange(min_x, max_x + 1)
+    y_center: int = rd.randrange(min_y, max_y + 1)
+    generated_circle = Circle(
+        x_center_pxl=x_center, y_center_pxl=y_center, radius_pxl=circle_radius
+    )
+    return generated_circle
+
+
+def generate_random_square(
+    target_img_shape_wh: Tuple[int, int],
+    min_side_pxl: int,
+    gap_between_image_boundaries: int = 1,
+) -> Square:
+    """
+    Generates random rotated square that could be placed on image.
+    Ensures that it will be within image boundaries
+
+    Args:
+        target_img_shape_wh (Tuple[int, int]): _description_
+        min_side_pxl (int): _description_
+        gap_between_image_boundaries (int, optional): _description_. Defaults to 1.
+
+    Returns:
+        Square: _description_
+    """
+
+    def _get_rotated_square_bounding_rect_side(box_side_pxl: int, angle_degrees: int) -> int:
+        """Gets side of bounding bbox that will cover rotated square, defined by side and angle"""
+
+        origin_point = (0, 0)
+        rect = (
+            origin_point,
+            (box_side_pxl, box_side_pxl),
+            angle_degrees,
+        )
+        rotated_bbox_points = cv2.boxPoints(rect)
+        rotated_bbox_w = rotated_bbox_points[:, 0].max() - rotated_bbox_points[:, 0].min()
+        rotated_bbox_h = rotated_bbox_points[:, 1].max() - rotated_bbox_points[:, 1].min()
+        return int(ceil(max(rotated_bbox_h, rotated_bbox_w)))
+
+    def _get_maximum_square_side() -> int:
+        """Gets maximum side, that will allow square to fit in the image with any rotation"""
+
+        w, h = target_img_shape_wh
+        min_img_side: int = min(w, h)
+        max_square_side = (
+            min_img_side - gap_between_image_boundaries * 2
+        ) / MAX_SQUARE_BBOX_SIDE_GAIN_KOEF
+        max_square_side = int(floor(max_square_side)) - 1
+        return max_square_side
+
+    # generate square dimensions
+    max_square_side = _get_maximum_square_side()
+    square_side = rd.randrange(min_side_pxl, max_square_side + 1)
+    angle_degrees = rd.randrange(0, 360 + 1)
+
+    rotated_square_bbox_side: int = _get_rotated_square_bounding_rect_side(
+        box_side_pxl=square_side, angle_degrees=angle_degrees
+    )
+
+    # generate square center
+    w, h = target_img_shape_wh
+    rotated_square_bbox_half_side: int = int(rotated_square_bbox_side / 2)
+    min_x = gap_between_image_boundaries + rotated_square_bbox_half_side
+    max_x = (w - 1) - rotated_square_bbox_half_side - gap_between_image_boundaries
+
+    min_y = gap_between_image_boundaries + rotated_square_bbox_half_side
+    max_y = (h - 1) - rotated_square_bbox_half_side - gap_between_image_boundaries
+
+    # sanity check center ranges
+    if not (min_x < max_x):
+        raise ValueError(f"Invalid range for center x {min_x, max_x}")
+
+    if not (min_y < max_y):
+        raise ValueError(f"Invalid range for center y {min_y, max_y}")
+
+    x_center: int = rd.randrange(min_x, max_x + 1)
+    y_center: int = rd.randrange(min_y, max_y + 1)
+
+    generate_random_square = Square(
+        x_center_pxl=x_center,
+        y_center_pxl=y_center,
+        side_length_pxl=square_side,
+        angle_degrees=angle_degrees,
+    )
+    return generate_random_square

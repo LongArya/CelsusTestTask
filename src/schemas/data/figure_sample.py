@@ -8,5 +8,8 @@ class FigureSampleMeta(BaseModel):
     figure_kind: FigureKind
     figure_meta: Union[Circle, Square]
 
+    class Config:
+        use_enum_values = True
+
 
 FIGURE_SAMPLE = Tuple[np.ndarray, FigureSampleMeta]

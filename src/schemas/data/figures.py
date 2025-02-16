@@ -1,4 +1,10 @@
 from pydantic import BaseModel
+from enum import Enum
+
+
+class FigureKind(Enum):
+    CIRCLE = "CIRCLE"
+    SQUARE = "SQUARE"
 
 
 class Circle(BaseModel):

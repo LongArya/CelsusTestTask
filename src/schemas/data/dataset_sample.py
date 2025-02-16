@@ -65,3 +65,16 @@ class SiameseDsWithRegressionSample(SiameseDsSample):
 
     regression_target1: torch.Tensor
     regression_target2: torch.Tensor
+
+
+@dataclass
+class CenterRegressionSample:
+    """
+    Contains siamese sample/batch
+
+    Additional info - regression target for each image,
+    which is figure center in normalized coordinates
+    """
+
+    image: torch.Tensor
+    regression_target: torch.Tensor

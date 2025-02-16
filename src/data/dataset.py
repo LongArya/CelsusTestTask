@@ -12,6 +12,7 @@ from ..schemas.data.dataset_sample import (
     ImagePair,
     SiameseDsSample,
     SiameseDsWithRegressionSample,
+    CenterRegressionSample,
 )
 from .fugure_sample_generation import SampleGeneratorInterface
 from torchvision.transforms.functional import to_tensor
@@ -188,3 +189,61 @@ class SiameseSamplesWithRegressionDatasetReader(ImagePairReader):
         img_pair: ImagePair = read_image_pair(self._image_pairs_folders[index])
         siamese_sample = self._construct_sample_with_regression_target(img_pair)
         return siamese_sample
+
+
+class CenterRegressionDatasetReader(Dataset):
+    """Test dataset for center regression feasibility test"""
+
+    def __init__(self, dataset_root: DirectoryPath):
+        super().__init__()
+        self._dataset_root = dataset_root
+        self._image_pairs_folders: List[DirectoryPath] = [
+            self._dataset_root / folder
+            for folder in sorted(os.listdir(self._dataset_root))
+        ]
+
+    @staticmethod
+    def collate_samples(
+        batch: List[CenterRegressionSample],
+    ) -> CenterRegressionSample:
+        collated_batch = CenterRegressionSample(
+            image=default_collate([sample.image for sample in batch]),
+            regression_target=default_collate(
+                [sample.regression_target for sample in batch]
+            ),
+        )
+        return collated_batch
+
+    def __len__(self) -> int:
+        return len(self._image_pairs_folders) * 2
+
+    def _get_object_center_norm_coordinates(
+        self, img: np.ndarray, figure_sample_info: FigureSampleMeta
+    ) -> torch.Tensor:
+        img_h, img_w = img.shape[:2]
+        x_center_norm: float = figure_sample_info.figure_meta.x_center_pxl / img_w
+        y_center_norm: float = figure_sample_info.figure_meta.y_center_pxl / img_h
+        return torch.tensor([x_center_norm, y_center_norm])
+
+    def __getitem__(self, index) -> CenterRegressionSample:
+        read_pair_index = int(index // 2)
+        img_pair: ImagePair = read_image_pair(
+            self._image_pairs_folders[read_pair_index]
+        )
+        read_first_image = index % 2 == 0
+        sample: CenterRegressionSample
+        if read_first_image:
+            sample = CenterRegressionSample(
+                image=to_tensor(img_pair.img1),
+                regression_target=self._get_object_center_norm_coordinates(
+                    img=img_pair.img1, figure_sample_info=img_pair.img1_meta
+                ),
+            )
+        else:
+            sample = CenterRegressionSample(
+                image=to_tensor(img_pair.img2),
+                regression_target=self._get_object_center_norm_coordinates(
+                    img=img_pair.img2, figure_sample_info=img_pair.img2_meta
+                ),
+            )
+        return sample

@@ -18,6 +18,8 @@ __pycache__/
 *.so
 
 # Distribution / packaging
+data/datasets
+lightning_logs
 .Python
 .vscode/
 build/

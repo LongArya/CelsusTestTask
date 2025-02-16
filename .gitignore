@@ -1,5 +1,4 @@
 # Data
-/data/
 
 # Mac OS-specific storage files
 .DS_Store
@@ -20,6 +19,7 @@ __pycache__/
 
 # Distribution / packaging
 .Python
+.vscode/
 build/
 develop-eggs/
 dist/

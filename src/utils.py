@@ -1,5 +1,6 @@
 import os
 import json
+import yaml
 from typing import List, Dict
 from pydantic import FilePath, DirectoryPath
 from pathlib import Path
@@ -22,4 +23,10 @@ def write_json(data: Dict, json_file: Path) -> None:
 def read_json(json_file: FilePath) -> Dict:
     with open(json_file, "r") as json_file:
         data = json.load(json_file)
+    return data
+
+
+def read_yaml(file_path: FilePath) -> Dict:
+    with open(file_path, "r") as f:
+        data = yaml.safe_load(f)
     return data

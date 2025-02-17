@@ -112,6 +112,15 @@ def inspect_mobile_net_v3_structure():
         print(type(block), f"{list(init_size)[1:]} -> {list(x.size())[1:]}")
 
 
+def inspect_custom_net_v3_structure():
+    model = MobileNetV3LikeConvBackbone(128)
+    x = torch.zeros((1, 3, 32, 32))
+    for block in model.features:
+        init_size = x.size()
+        x = block(x)
+        print(type(block), f"{list(init_size)[1:]} -> {list(x.size())[1:]}")
+
+
 def print_mobilenetv3_structure():
     model = mobilenet_v3_small()
     for layer in model.features:

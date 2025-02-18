@@ -55,6 +55,15 @@ class SiameseDsSample:
 
 
 @dataclass
+class SiameseDsWithPredsSample(SiameseDsSample):
+    emb1: torch.Tensor
+    emb2: torch.Tensor
+
+    def get_cosine_similarity(self) -> torch.Tensor:
+        return torch.cosine_similarity(self.emb1, self.emb2, dim=-1)
+
+
+@dataclass
 class SiameseDsWithRegressionSample(SiameseDsSample):
     """
     Contains siamese sample/batch

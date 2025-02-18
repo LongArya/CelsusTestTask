@@ -78,3 +78,18 @@ class CenterRegressionSample:
 
     image: torch.Tensor
     regression_target: torch.Tensor
+
+
+@dataclass
+class CenterRegressionSampleWithPrediction(CenterRegressionSample):
+    """Extends original interface with field for prediction"""
+
+    prediction: torch.Tensor
+
+    def get_distance_pixels(self) -> torch.Tensor:
+        c, h, w = self.image.size()
+        denorm_tnz = torch.tensor([w, h], dtype=torch.float32)
+        distance = torch.linalg.vector_norm(
+            self.prediction * denorm_tnz - self.regression_target * denorm_tnz
+        )
+        return distance

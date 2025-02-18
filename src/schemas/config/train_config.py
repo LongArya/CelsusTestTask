@@ -31,3 +31,7 @@ class TrainConfig(BaseModel):
     def model_post_init(self, __context):
         if isinstance(self.optimizer_kind, str):
             self.optimizer_kind = OptimizerKind[self.optimizer_kind]
+
+
+class SiameseWithRegressionTrainConfig(TrainConfig):
+    regression_loss_koef: float

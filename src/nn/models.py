@@ -103,6 +103,44 @@ class CenterRegressionModel(nn.Module):
         return x
 
 
+class VanillaSiameseNetwork(nn.Module):
+    """Vanilla siamese netowork that used shared bbone for both inputs"""
+
+    def __init__(self, embedding_size: int):
+        super().__init__()
+        self._embedding_size = embedding_size
+        self.backbone = MobileNetV3LikeConvBackbone(self._embedding_size)
+
+    def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+        out1 = self.backbone(x1)
+        out2 = self.backbone(x2)
+        return out1, out2
+
+
+class SiameseNetworkWithRegressionHead(nn.Module):
+    """
+    Vanilla siamese netowork,
+    but while in train mode, uses additional head
+    for object center regression
+    """
+
+    def __init__(self, embedding_size: int):
+        super().__init__()
+        self._embedding_size = embedding_size
+        self.backbone = MobileNetV3LikeConvBackbone(self._embedding_size)
+        self.head = CenterRegressionHead(self._embedding_size)
+
+    def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+        emb1 = self.backbone(x1)
+        emb2 = self.backbone(x2)
+        if not self.training:
+            return emb1, emb2
+        else:
+            regression1 = self.head(emb1)
+            regression2 = self.head(emb2)
+            return emb1, regression1, emb2, regression2
+
+
 def inspect_mobile_net_v3_structure():
     model = mobilenet_v3_small()
     x = torch.zeros((1, 3, 224, 224))

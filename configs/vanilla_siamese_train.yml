@@ -1,0 +1,9 @@
+embedding_size: 128
+optimizer_kind: SGD
+optimizer_kwargs:
+  lr: 1e-04
+batch_size: 64
+epochs_num: 100
+clearml_project: CelsusTestTask  
+clearml_task_name: vanilla_siamese
+log_samples_num: 10

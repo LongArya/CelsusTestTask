@@ -1,0 +1,10 @@
+embedding_size: 128
+optimizer_kind: ADAM
+optimizer_kwargs:
+  lr: 1e-03
+batch_size: 64
+epochs_num: 100
+clearml_project: CelsusTestTask  
+clearml_task_name: siamese_with_regression
+log_samples_num: 10
+regression_loss_koef: 1

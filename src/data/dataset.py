@@ -181,7 +181,7 @@ class SiameseSamplesWithRegressionDatasetReader(ImagePairReader):
             regression_target2=self._get_object_center_norm_coordinates(
                 img=img_pair.img2, figure_sample_info=img_pair.img2_meta
             ),
-            label=label,
+            label=torch.tensor(label, dtype=torch.float32),
         )
         return sample
 

@@ -7,7 +7,11 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import numpy as np
 
-from ..schemas.data.dataset_sample import CenterRegressionSample
+from ..schemas.data.dataset_sample import (
+    CenterRegressionSample,
+    SiameseDsSample,
+    SiameseDsWithRegressionSample,
+)
 
 
 SAMPLE_PLOT_FUNCTION = Callable[[Any], Figure]
@@ -43,6 +47,19 @@ def plot_regression_sample(sample: CenterRegressionSample) -> Figure:
     ax.imshow(img)
     ax.scatter(x, y, c="r", label="figure center")
     ax.legend()
+    return fig
+
+
+def plot_siamese_sample(sample: SiameseDsSample) -> Figure:
+    """Plots siamese network sample"""
+
+    img1 = tnz_to_numpy(sample.img1)
+    img2 = tnz_to_numpy(sample.img2)
+
+    fig, (img1_ax, img2_ax) = plt.subplots(1, 2)
+    img1_ax.imshow(img1)
+    img2_ax.imshow(img2)
+    fig.suptitle(f"siamese label = {sample.label.item()}")
     return fig
 
 

@@ -13,6 +13,20 @@ bneck_conf = partial(InvertedResidualConfig, dilation=1, width_mult=1)
 norm_layer = partial(nn.BatchNorm2d, eps=0.001, momentum=0.01)
 
 
+class MobileNetV3Backbone(nn.Module):
+    def __init__(self):
+        super(MobileNetV3Backbone, self).__init__()
+        mobilenet = mobilenet_v3_small()
+        self.backbone = mobilenet.features
+        self.global_avg_pool = nn.AdaptiveAvgPool2d(1)
+
+    def forward(self, x):
+        x = self.backbone(x)
+        x = self.global_avg_pool(x)
+        x = torch.flatten(x, start_dim=1)
+        return x
+
+
 class MobileNetV3LikeConvBackbone(nn.Module):
     """
     Mobile net backbone heavily inspired by MobileNetV3, adapted for small resolution
@@ -110,6 +124,17 @@ class VanillaSiameseNetwork(nn.Module):
         super().__init__()
         self._embedding_size = embedding_size
         self.backbone = MobileNetV3LikeConvBackbone(self._embedding_size)
+
+    def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+        out1 = self.backbone(x1)
+        out2 = self.backbone(x2)
+        return out1, out2
+
+
+class VanillaSiameseNetworkMobileNetV3Based(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.backbone = MobileNetV3Backbone()
 
     def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
         out1 = self.backbone(x1)

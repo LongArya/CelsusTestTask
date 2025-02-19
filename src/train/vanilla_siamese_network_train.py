@@ -9,17 +9,30 @@ from ..analytics.utils import get_best_f1_score_point
 from ..schemas.metrics.pr_curve import PRCurvePoint
 from ..schemas.data.dataset_sample import SiameseDsSample
 from ..schemas.config.train_config import TrainConfig, OptimizerKind
-from ..data.dataset import SiameseSamplesDatasetReader
-from ..nn.models import VanillaSiameseNetwork
+from ..data.dataset import (
+    SiameseSamplesDatasetReader,
+    SiameseSamplesDatasetReaderLabelView,
+    DatasetIndexSubsetView,
+)
+from ..nn.models import (
+    VanillaSiameseNetwork,
+    MobileNetV3Backbone,
+    VanillaSiameseNetworkMobileNetV3Based,
+)
 from .log_utils import (
     init_clearml_task,
     log_dataset_samples_to_clearml,
     plot_siamese_sample,
 )
+import matplotlib.pyplot as plt
 from pytorch_lightning.callbacks import ModelCheckpoint
 from ..utils import read_yaml
 from ..consts import TRAIN_DATASET_ROOT, VAL_DATASET_ROOT, TEST_COLOR_ROOT
 from sklearn.metrics import precision_recall_curve
+from pytorch_lightning.callbacks import Callback
+
+
+MOBILE_NET_SIZE = (224, 224)
 
 
 def preprocess_label_for_cosine_emb_loss(label: torch.Tensor) -> None:
@@ -31,13 +44,63 @@ def preprocess_label_for_cosine_emb_loss(label: torch.Tensor) -> None:
     return label
 
 
+class DebugCosineSimilarityDistribution(Callback):
+    """Callback that logs distribution of cosine similarities at the end of every epoch"""
+
+    def __init__(self, dataset: SiameseDsSample):
+        super().__init__()
+        self._dataset = dataset
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        sample: SiameseDsSample
+        same_objects_cos_sim = []
+        diff_objectst_cos_sim = []
+
+        for sample in self._dataset:
+            img1 = sample.img1.to(pl_module.device).unsqueeze(0)
+            img2 = sample.img2.to(pl_module.device).unsqueeze(0)
+            emb1, emb2 = pl_module(img1, img2)
+            cosine_sim = torch.cosine_similarity(emb1, emb2, dim=-1).item()
+            if sample.label.item() == 1:
+                same_objects_cos_sim.append(cosine_sim)
+            else:
+                diff_objectst_cos_sim.append(cosine_sim)
+
+        fig, ax = plt.subplots(1, 1)
+        ax.hist(same_objects_cos_sim, alpha=0.5, label="same objects")
+        ax.hist(diff_objectst_cos_sim, alpha=0.5, label="diff objects")
+        ax.legend()
+
+        clearml.Logger.current_logger().report_matplotlib_figure(
+            title="Debug plots",
+            series="Cosine similarity distribution",
+            figure=fig,
+            iteration=trainer.current_epoch,
+        )
+
+        return super().on_validation_epoch_end(trainer, pl_module)
+
+
+class GradientDebuggerCallback(Callback):
+    """Prints gradients values to CMD"""
+
+    def on_after_backward(self, trainer, pl_module: "VanillaSiameseLightningModule"):
+        """Check gradients after backpropagation"""
+
+        for name, param in pl_module._model.backbone.named_parameters():
+            if param.grad is None:
+                print(f"WARNING: No gradient for {name}")
+            else:
+                print(f"OK: {name} gradient mean: {param.grad.abs().mean().item()}")
+
+
 class VanillaSiameseLightningModule(pl.LightningModule):
     """Lightning module for training Vanilla siamese model"""
 
     def __init__(self, config: TrainConfig) -> None:
         super().__init__()
         self._config = config
-        self._model = VanillaSiameseNetwork(embedding_size=config.embedding_size)
+        self._model = VanillaSiameseNetworkMobileNetV3Based()
         self._val_ds_cosine_similarities: torch.Tensor = torch.empty((0,))
         self._val_ds_labels: torch.Tensor = torch.empty((0,))
         self._cosine_loss = nn.CosineEmbeddingLoss()
@@ -179,12 +242,13 @@ def run_train(
         save_top_k=10,
     )
 
+    debug_callback = DebugCosineSimilarityDistribution(dataset=val_dataset)
     trainer = pl.Trainer(
         max_epochs=config.epochs_num,
         accelerator="auto",
         gpus=[0],
         check_val_every_n_epoch=1,
-        callbacks=[model_ckpt_callback],
+        callbacks=[model_ckpt_callback, debug_callback, GradientDebuggerCallback()],
     )
 
     trainer.fit(
@@ -199,8 +263,11 @@ def debug_training_pipeline():
         "E:\\dev\\CelsusWorkspace\\CelsusTestTask\\configs\\vanilla_siamese_train.yml"
     )
     config = TrainConfig.model_validate(config_data)
-    train_ds = SiameseSamplesDatasetReader(TRAIN_DATASET_ROOT)
-    val_ds = SiameseSamplesDatasetReader(VAL_DATASET_ROOT)
+
+    train_ds = SiameseSamplesDatasetReader(TEST_COLOR_ROOT, target_size=MOBILE_NET_SIZE)
+    # train_ds = DatasetIndexSubsetView(train_ds, [1])
+    val_ds = SiameseSamplesDatasetReader(TEST_COLOR_ROOT, target_size=MOBILE_NET_SIZE)
+    # val_ds = DatasetIndexSubsetView(val_ds, [1])
     run_train(train_dataset=train_ds, val_dataset=val_ds, config=config)
 
 

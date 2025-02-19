@@ -23,6 +23,18 @@ from ..consts import (
     TRAIN_DATASET_ROOT,
     VAL_DATASET_ROOT,
 )
+from pytorch_lightning.callbacks import Callback
+
+
+class GradientDebuggerCallback(Callback):
+    def on_after_backward(self, trainer, pl_module: "CenterRegressionLightningModule"):
+        """Check gradients after backpropagation"""
+
+        for name, param in pl_module._model.backbone.named_parameters():
+            if param.grad is None:
+                print(f"⚠️ WARNING: No gradient for {name}")
+            else:
+                print(f"✅ {name} gradient mean: {param.grad.abs().mean().item()}")
 
 
 class CenterRegressionLightningModule(pl.LightningModule):
@@ -150,7 +162,7 @@ def run_train(
         accelerator="auto",
         gpus=[0],
         check_val_every_n_epoch=1,
-        callbacks=[model_ckpt_callback],
+        callbacks=[model_ckpt_callback, GradientDebuggerCallback()],
     )
 
     trainer.fit(
@@ -168,3 +180,6 @@ def debug_training_pipeline():
     train_ds = CenterRegressionDatasetReader(TRAIN_DATASET_ROOT)
     val_ds = CenterRegressionDatasetReader(VAL_DATASET_ROOT)
     run_train(train_dataset=train_ds, val_dataset=val_ds, config=config)
+
+
+debug_training_pipeline()

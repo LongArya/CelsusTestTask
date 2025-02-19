@@ -14,6 +14,7 @@ from ..schemas.data.dataset_sample import (
     SiameseDsWithRegressionSample,
     CenterRegressionSample,
 )
+from typing import Optional, Tuple
 from .fugure_sample_generation import SampleGeneratorInterface
 from torchvision.transforms.functional import to_tensor
 import numpy as np
@@ -110,8 +111,44 @@ class ImagePairReader(Dataset):
         return super().__getitem__(index)
 
 
+class SiameseSamplesDatasetReaderLabelView(ImagePairReader):
+    def __init__(self, dataset_root: DirectoryPath, target_label: int):
+        super().__init__(dataset_root)
+        # keep image_pairs_with_target label
+        target_label_img_pairs: List[DirectoryPath] = []
+        for img_pairs_root in self._image_pairs_folders:
+            file_structure = ImagePairFileStructure(img_pairs_root)
+            img1_meta = FigureSampleMeta.model_validate(
+                read_json(file_structure.img1_meta_path)
+            )
+            img2_meta = FigureSampleMeta.model_validate(
+                read_json(file_structure.img2_meta_path)
+            )
+            img_pair_label = int(img1_meta.figure_kind == img2_meta.figure_kind)
+            if img_pair_label == target_label:
+                target_label_img_pairs.append(img_pairs_root)
+        self._image_pairs_folders = target_label_img_pairs
+
+    def _construct_siamese_ds_sample(self, img_pair: ImagePair) -> SiameseDsSample:
+        label: int = img_pair.img1_meta.figure_kind == img_pair.img2_meta.figure_kind
+        sample = SiameseDsSample(
+            img1=to_tensor(img_pair.img1),
+            img2=to_tensor(img_pair.img2),
+            label=torch.tensor(label, dtype=torch.float32),
+        )
+        return sample
+
+    def __getitem__(self, index) -> SiameseDsSample:
+        img_pair: ImagePair = read_image_pair(self._image_pairs_folders[index])
+        siamese_sample = self._construct_siamese_ds_sample(img_pair)
+        return siamese_sample
+
+
 class SiameseSamplesDatasetReader(ImagePairReader):
-    def __init__(self, dataset_root: DirectoryPath):
+    def __init__(
+        self, dataset_root: DirectoryPath, target_size: Optional[Tuple[int, int]] = None
+    ):
+        self._target_size = target_size
         super().__init__(dataset_root)
 
     @staticmethod
@@ -125,9 +162,15 @@ class SiameseSamplesDatasetReader(ImagePairReader):
 
     def _construct_siamese_ds_sample(self, img_pair: ImagePair) -> SiameseDsSample:
         label: int = img_pair.img1_meta.figure_kind == img_pair.img2_meta.figure_kind
+        img1 = img_pair.img1
+        img2 = img_pair.img2
+        if self._target_size is not None:
+            img1 = cv2.resize(img1, self._target_size)
+            img2 = cv2.resize(img2, self._target_size)
+
         sample = SiameseDsSample(
-            img1=to_tensor(img_pair.img1),
-            img2=to_tensor(img_pair.img2),
+            img1=to_tensor(img1),
+            img2=to_tensor(img2),
             label=torch.tensor(label, dtype=torch.float32),
         )
         return sample
@@ -247,3 +290,19 @@ class CenterRegressionDatasetReader(Dataset):
                 ),
             )
         return sample
+
+
+class DatasetIndexSubsetView(Dataset):
+    """Allows to tread original dataset subset as separate ds"""
+
+    def __init__(self, base_dataset: Dataset, indexes: List[int]):
+        super().__init__()
+        self._base_dataset = base_dataset
+        self._indexes = indexes
+
+    def __len__(self) -> int:
+        return len(self._indexes)
+
+    def __getitem__(self, index):
+        base_ds_index = self._indexes[index]
+        return self._base_dataset[base_ds_index]

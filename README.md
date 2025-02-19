@@ -11,6 +11,7 @@ celsus test task
 ```
 ├── LICENSE            <- Open-source license if one is chosen
 ├── README.md          <- The top-level README for developers using this project.
+├── configs            <- Yml configs with experiments settings.
 ├── data
 │   ├── textures       <- Textures used for dataset generation
 │   └── datasets       <- Root of project datasets 

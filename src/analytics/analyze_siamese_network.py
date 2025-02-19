@@ -15,9 +15,11 @@ from ..schemas.data.dataset_sample import (
 )
 from typing import List, Optional, Tuple
 from ..utils import read_yaml
+from ..train.log_utils import tnz_to_numpy
 from matplotlib.pyplot import Axes
 from collections import Counter
 from torch.nn import CosineEmbeddingLoss
+import numpy as np
 
 
 class SiameseNetowrkPredsMemCacher(Dataset):
@@ -74,3 +76,48 @@ def plot_cosine_similarity_distribution_for_each_label(
     ax.hist(same_object_cos_sim, alpha=0.5, label="same objects")
     ax.hist(diff_object_cos_sim, alpha=0.5, label="diff objects")
     ax.legend()
+
+
+def plot_pair_sample(sample: SiameseDsWithPredsSample, ax):
+    img1 = tnz_to_numpy(sample.img1)
+    img2 = tnz_to_numpy(sample.img2)
+    cat_img = np.concatenate((img1, img2), axis=1)
+    ax.imshow(cat_img)
+    ax.set_title(
+        f"COS SIM = {sample.get_cosine_similarity().item():.2f}, label={sample.label.item()}"
+    )
+
+
+def plot_top_10_similarity_pairs(
+    ds: SiameseNetowrkPredsMemCacher, mode: str, pairs_label: int
+):
+    if mode not in ["max", "min"]:
+        raise ValueError("")
+
+    TOP_N = 10
+    COLS = 2
+    ROWS = 5
+
+    distances = [
+        sample.get_cosine_similarity().item()
+        for sample in ds
+        if sample.label.item() == pairs_label
+    ]
+    pair_indexes = [
+        index for index, sample in enumerate(ds) if sample.label.item() == pairs_label
+    ]
+
+    top_n_ditsances_indexes: np.ndarray
+    if mode == "min":
+        top_n_ditsances_indexes = np.argsort(distances)[:TOP_N]
+    else:
+        top_n_ditsances_indexes = np.argsort(distances)[-TOP_N:][::-1]
+
+    fig, axes = plt.subplots(COLS, ROWS, figsize=(20, 10))
+    for plot_index, pair_i in enumerate(top_n_ditsances_indexes):
+        base_ds_index = pair_indexes[pair_i]
+        sample = ds[base_ds_index]
+        ax_i, ax_j = np.unravel_index(plot_index, (COLS, ROWS))
+        plot_pair_sample(sample, axes[ax_i, ax_j])
+
+    return fig

@@ -15,9 +15,9 @@ from ..data.dataset import (
     DatasetIndexSubsetView,
 )
 from ..nn.models import (
-    VanillaSiameseNetwork,
+    VanillaSiameseNetwork2dRepr,
     MobileNetV3Backbone,
-    VanillaSiameseNetworkMobileNetV3Based,
+    VanillaSiameseNetwork2dRepr,
 )
 from .log_utils import (
     init_clearml_task,
@@ -44,12 +44,55 @@ def preprocess_label_for_cosine_emb_loss(label: torch.Tensor) -> None:
     return label
 
 
+class CosineLossWithEucledianPenalty(nn.Module):
+    """Adds eucledian penalty for negative samples in order to break collinearity"""
+
+    def __init__(self, euclidean_penalty_weight=0.01, euclidean_threshold=0.1):
+        super(CosineLossWithEucledianPenalty, self).__init__()
+        self.euclidean_penalty_weight = euclidean_penalty_weight
+        self.euclidean_threshold = euclidean_threshold
+
+    def forward(
+        self, input1: torch.Tensor, input2: torch.Tensor, target: torch.Tensor
+    ) -> torch.Tensor:
+        input1_norm = F.normalize(input1, p=2, dim=1)
+        input2_norm = F.normalize(input2, p=2, dim=1)
+        # Compute cosine similarity and cosine loss
+        cos_sim = F.cosine_similarity(input1_norm, input2_norm, dim=1)
+        cosine_loss = torch.where(target == 1, 1 - cos_sim, torch.clamp(cos_sim, min=0))
+        cosine_loss *= 3
+        # Compute Euclidean distance between normalized embeddings
+        euclidean_dist = torch.norm(input1_norm - input2_norm, p=2, dim=1)
+
+        # Apply Euclidean penalty for different-class pairs with small distances
+        euclidean_penalty = torch.where(
+            (target == -1) & (euclidean_dist < self.euclidean_threshold),
+            self.euclidean_penalty_weight * (self.euclidean_threshold - euclidean_dist),
+            torch.tensor(0.0).to(input1.device),
+        )
+        cosine_loss = torch.where(
+            euclidean_penalty > 0, torch.tensor(0.0).to(input1.device), cos_sim
+        )
+        print("EUCLEDIAN_PENALTY")
+        print(euclidean_penalty)
+        print("COSINE LOSS")
+        print(cosine_loss)
+
+        # Combine cosine loss and Euclidean penalty
+        total_loss = cosine_loss + euclidean_penalty
+        print("TOTAL LOSS")
+        print(total_loss)
+
+        return total_loss.mean()
+
+
 class DebugCosineSimilarityDistribution(Callback):
     """Callback that logs distribution of cosine similarities at the end of every epoch"""
 
-    def __init__(self, dataset: SiameseDsSample):
+    def __init__(self, dataset: SiameseDsSample, series: int):
         super().__init__()
         self._dataset = dataset
+        self._series = series
 
     def on_validation_epoch_end(self, trainer, pl_module):
         sample: SiameseDsSample
@@ -72,8 +115,79 @@ class DebugCosineSimilarityDistribution(Callback):
         ax.legend()
 
         clearml.Logger.current_logger().report_matplotlib_figure(
-            title="Debug plots",
-            series="Cosine similarity distribution",
+            title="Cosine similarity distribution",
+            series=self._series,
+            figure=fig,
+            iteration=trainer.current_epoch,
+        )
+
+        return super().on_validation_epoch_end(trainer, pl_module)
+
+
+class PrintWeightsCallback(Callback):
+    def on_validation_epoch_end(self, trainer, pl_module):
+        for name, param in pl_module._model.named_parameters():
+            if (
+                param.requires_grad and "weight" in name
+            ):  # Only print weights, not biases
+                weight_norm = torch.norm(param.data, p=2).item()  # L2 norm
+                print(f"Weight norm for layer {name}: {weight_norm:.6f}")
+
+        return super().on_validation_epoch_end(trainer, pl_module)
+
+
+class Debug2dVectorPlot(Callback):
+    """
+    At the end of each epoch plots vector pairs.
+    It is a debug callback for 2d embedding case
+    """
+
+    def __init__(self, dataset: SiameseDsSample):
+        super().__init__()
+        self._dataset = dataset
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        sample: SiameseDsSample
+        for sample in self._dataset:
+            img1 = sample.img1.to(pl_module.device).unsqueeze(0)
+            img2 = sample.img2.to(pl_module.device).unsqueeze(0)
+            emb1, emb2 = pl_module(img1, img2)
+            emb1 = F.normalize(emb1)
+            emb2 = F.normalize(emb2)
+            fig, ax = plt.subplots(1, 1)
+            ax.arrow(
+                0,
+                0,
+                emb1[0][0].item(),
+                emb1[0][1].item(),
+                head_width=0.05,
+                head_length=0.05,
+                fc="blue",
+                ec="blue",
+            )
+            ax.arrow(
+                0,
+                0,
+                emb2[0][0].item(),
+                emb2[0][1].item(),
+                head_width=0.05,
+                head_length=0.05,
+                fc="red",
+                ec="red",
+            )
+            ax.set_xlim(-1.5, 1.5)
+            ax.set_ylim(-1.5, 1.5)
+            ax.set_aspect("equal")
+            ax.grid(True)
+
+            # Add labels
+            ax.set_xlabel("X-axis")
+            ax.set_ylabel("Y-axis")
+            ax.set_title(f"E1 = {emb1}, E2 = {emb2}")
+
+        clearml.Logger.current_logger().report_matplotlib_figure(
+            title="Debug embedding plots",
+            series="vetors",
             figure=fig,
             iteration=trainer.current_epoch,
         )
@@ -87,11 +201,12 @@ class GradientDebuggerCallback(Callback):
     def on_after_backward(self, trainer, pl_module: "VanillaSiameseLightningModule"):
         """Check gradients after backpropagation"""
 
-        for name, param in pl_module._model.backbone.named_parameters():
-            if param.grad is None:
-                print(f"WARNING: No gradient for {name}")
+        for name, param in pl_module._model.named_parameters():
+            if param.grad is not None:
+                if torch.norm(param.grad, p=2).item() > 1e-06:
+                    print(f"Gradient for {name}: {torch.norm(param.grad, p=2).item()}")
             else:
-                print(f"OK: {name} gradient mean: {param.grad.abs().mean().item()}")
+                print(f"No gradient for {name}")
 
 
 class VanillaSiameseLightningModule(pl.LightningModule):
@@ -100,10 +215,13 @@ class VanillaSiameseLightningModule(pl.LightningModule):
     def __init__(self, config: TrainConfig) -> None:
         super().__init__()
         self._config = config
-        self._model = VanillaSiameseNetworkMobileNetV3Based()
+        self._model = VanillaSiameseNetwork2dRepr(config.embedding_size)
         self._val_ds_cosine_similarities: torch.Tensor = torch.empty((0,))
         self._val_ds_labels: torch.Tensor = torch.empty((0,))
         self._cosine_loss = nn.CosineEmbeddingLoss()
+        # self._cosine_loss = CosineLossWithEucledianPenalty(
+        #     euclidean_penalty_weight=1, euclidean_threshold=1
+        # )
 
     def forward(self, img1: torch.Tensor, img2: torch.Tensor) -> torch.Tensor:
         output = self._model(img1, img2)
@@ -241,16 +359,20 @@ def run_train(
         filename="checkpoint_{epoch:02d}-{best_F1:.3f}",
         save_top_k=10,
     )
-
-    debug_callback = DebugCosineSimilarityDistribution(dataset=val_dataset)
     trainer = pl.Trainer(
         max_epochs=config.epochs_num,
         accelerator="auto",
         gpus=[0],
         check_val_every_n_epoch=1,
-        callbacks=[model_ckpt_callback, debug_callback, GradientDebuggerCallback()],
+        callbacks=[
+            model_ckpt_callback,
+            DebugCosineSimilarityDistribution(train_dataset, series="train"),
+            DebugCosineSimilarityDistribution(val_dataset, series="val"),
+            # Debug2dVectorPlot(val_dataset),
+            # PrintWeightsCallback(),
+            # GradientDebuggerCallback(),
+        ],
     )
-
     trainer.fit(
         model=model,
         train_dataloaders=train_loader,
@@ -263,11 +385,11 @@ def debug_training_pipeline():
         "E:\\dev\\CelsusWorkspace\\CelsusTestTask\\configs\\vanilla_siamese_train.yml"
     )
     config = TrainConfig.model_validate(config_data)
-
-    train_ds = SiameseSamplesDatasetReader(TEST_COLOR_ROOT, target_size=MOBILE_NET_SIZE)
-    # train_ds = DatasetIndexSubsetView(train_ds, [1])
-    val_ds = SiameseSamplesDatasetReader(TEST_COLOR_ROOT, target_size=MOBILE_NET_SIZE)
-    # val_ds = DatasetIndexSubsetView(val_ds, [1])
+    # train_ds = SiameseSamplesDatasetReaderLabelView(TRAIN_DATASET_ROOT, target_label=0)
+    # train_ds = DatasetIndexSubsetView(train_ds, [0])
+    # val_ds = train_ds
+    train_ds = SiameseSamplesDatasetReader(TRAIN_DATASET_ROOT)
+    val_ds = SiameseSamplesDatasetReader(VAL_DATASET_ROOT)
     run_train(train_dataset=train_ds, val_dataset=val_ds, config=config)
 
 

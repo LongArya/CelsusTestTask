@@ -10,7 +10,7 @@ from ..consts import IMG_SIZE
 
 
 bneck_conf = partial(InvertedResidualConfig, dilation=1, width_mult=1)
-norm_layer = partial(nn.BatchNorm2d, eps=0.001, momentum=0.01)
+norm_layer = partial(nn.BatchNorm2d)
 
 
 class MobileNetV3Backbone(nn.Module):
@@ -80,16 +80,18 @@ class MobileNetV3LikeConvBackbone(nn.Module):
             layers.append(InvertedResidual(config, norm_layer))
 
         self.features = nn.Sequential(*layers)
+        self.relu = torch.nn.ReLU()
         self.global_avg_pool = nn.AdaptiveAvgPool2d(1)
 
     def forward(self, x):
         x = self.features(x)
+        x = self.relu(x)
         x = self.global_avg_pool(x)
         x = torch.flatten(x, start_dim=1)
         return x
 
 
-class CenterRegressionHead(nn.Module):
+class Point2dRegressionHead(nn.Module):
     """Simple head, used for regressing object center in normalized coordinates"""
 
     def __init__(self, input_emb_size: int):
@@ -109,7 +111,7 @@ class CenterRegressionModel(nn.Module):
         super().__init__()
         self._embedding_size = embedding_size
         self.backbone = MobileNetV3LikeConvBackbone(self._embedding_size)
-        self.head = CenterRegressionHead(self._embedding_size)
+        self.head = Point2dRegressionHead(self._embedding_size)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.backbone(x)
@@ -117,7 +119,7 @@ class CenterRegressionModel(nn.Module):
         return x
 
 
-class VanillaSiameseNetwork(nn.Module):
+class VanillaSiameseNetwork2dRepr(nn.Module):
     """Vanilla siamese netowork that used shared bbone for both inputs"""
 
     def __init__(self, embedding_size: int):
@@ -128,6 +130,34 @@ class VanillaSiameseNetwork(nn.Module):
     def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
         out1 = self.backbone(x1)
         out2 = self.backbone(x2)
+        return out1, out2
+
+
+class VanillaSiameseNetwork2dRepr(nn.Module):
+    """Vanilla siamese netowork that outputs 2d points"""
+
+    def __init__(self, embedding_size: int):
+        super().__init__()
+        self._embedding_size = embedding_size
+        self.backbone = MobileNetV3LikeConvBackbone(self._embedding_size)
+        self.head = Point2dRegressionHead(self._embedding_size)
+
+    def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
+        # print("INSIDE MODEL")
+        # print(
+        #     f"GOT 2 INPUTS x1={x1.size()}, x2={x2.size()}, close={torch.allclose(x1, x2, atol=1e-6)}"
+        # )
+        out1 = self.backbone(x1)
+        out2 = self.backbone(x2)
+        # print("====")
+        # if self.training:
+        #     print("TRAIN NORM = ", torch.linalg.norm(out1))
+        # else:
+        #     print("VAL NORM = ", torch.linalg.norm(out1))
+        # print(f"CREATED 2 BBONE close={torch.allclose(out1, out2, atol=1e-4)}")
+        out1 = self.head(out1)
+        out2 = self.head(out2)
+        # print(f"CREATED 2 BBONE close={torch.allclose(out1, out2, atol=1e-05)}")
         return out1, out2
 
 
@@ -153,7 +183,7 @@ class SiameseNetworkWithRegressionHead(nn.Module):
         super().__init__()
         self._embedding_size = embedding_size
         self.backbone = MobileNetV3LikeConvBackbone(self._embedding_size)
-        self.head = CenterRegressionHead(self._embedding_size)
+        self.head = Point2dRegressionHead(self._embedding_size)
 
     def forward(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
         emb1 = self.backbone(x1)
@@ -176,7 +206,7 @@ def inspect_mobile_net_v3_structure():
 
 
 def inspect_custom_net_v3_structure():
-    model = MobileNetV3LikeConvBackbone(128)
+    model = MobileNetV3LikeConvBackbone(2)
     x = torch.zeros((1, 3, 32, 32))
     for block in model.features:
         init_size = x.size()
@@ -184,7 +214,40 @@ def inspect_custom_net_v3_structure():
         print(type(block), f"{list(init_size)[1:]} -> {list(x.size())[1:]}")
 
 
-def print_mobilenetv3_structure():
-    model = mobilenet_v3_small()
-    for layer in model.features:
-        print(type(layer))
+def print_weight_norms(model: nn.Module):
+    """
+    Prints the L2 norm of the weights for every layer in the model.
+    """
+    for name, param in model.named_parameters():
+        if param.requires_grad and "weight" in name:  # Only print weights, not biases
+            weight_norm = torch.norm(param.data, p=2).item()  # L2 norm
+            print(f"Weight norm for layer {name}: {weight_norm:.6f}")
+
+
+def _debug_mobile():
+    def get_random_input(h, w) -> torch.Tensor:
+        x = torch.zeros((1, 3, h, w), dtype=torch.float32)
+        x += torch.rand_like(x) / 255
+        return x
+
+    backbone = MobileNetV3LikeConvBackbone(128)
+    head = Point2dRegressionHead(128)
+    default_bbone = MobileNetV3Backbone()
+
+    # input = get_random_input(32, 32)
+    # print(torch.linalg.norm(backbone(input)))
+    print("SINGLE BRANCH")
+    print(head(backbone(get_random_input(32, 32))))
+    print(head(backbone(get_random_input(32, 32))))
+    print(head(backbone(get_random_input(32, 32))))
+    print(head(backbone(get_random_input(32, 32))))
+
+    # print(default_bbone(get_random_input(224, 224)))
+
+    model = VanillaSiameseNetwork2dRepr(128)
+    # model.eval()
+    print("INFER SIAMESE")
+    print(model(get_random_input(32, 32), get_random_input(32, 32)))
+
+
+# _debug_mobile()
